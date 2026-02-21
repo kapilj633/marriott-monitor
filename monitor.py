@@ -1,10 +1,18 @@
 import asyncio
-import json
 import os
+import requests
 from playwright.async_api import async_playwright
 
-TARGET_DATE = "2026-03-10"
+TARGET_DATES = {
+    "2026-03-09",
+    "2026-03-10",
+    "2026-03-11",
+    "2026-03-12",
+    "2026-03-13",
+}
+
 URL = "https://www.marriott.com/search/availabilityCalendar.mi?propertyCode=BOMRM&flexibleDateSearch=true&t-start=2026-03-01&t-end=2026-03-02&lengthOfStay=1&roomCount=1&numAdultsPerRoom=2"
+
 
 async def check_availability():
     async with async_playwright() as p:
@@ -12,18 +20,19 @@ async def check_availability():
         context = await browser.new_context()
         page = await context.new_page()
 
-        available = False
+        found_dates = set()
 
         async def handle_response(response):
-            nonlocal available
+            nonlocal found_dates
             if "phoenixShopADFSearchProductsByProperty" in response.url:
                 try:
                     data = await response.json()
                     edges = data["data"]["search"]["calendarSearchByProperty"]["edges"]
                     for edge in edges:
-                        if edge["node"]["startDate"] == TARGET_DATE:
-                            available = True
-                except:
+                        start_date = edge["node"]["startDate"]
+                        if start_date in TARGET_DATES:
+                            found_dates.add(start_date)
+                except Exception:
                     pass
 
         page.on("response", handle_response)
@@ -33,13 +42,25 @@ async def check_availability():
 
         await browser.close()
 
-        return available
+        return found_dates
+
+
+def send_telegram(message):
+    token = os.environ["TELEGRAM_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data={"chat_id": chat_id, "text": message},
+    )
+
 
 if __name__ == "__main__":
-    result = asyncio.run(check_availability())
+    available_dates = asyncio.run(check_availability())
 
-    if result:
-        print("AVAILABLE")
-        # Optional: send Telegram alert
+    if available_dates:
+        msg = f"Marriott AVAILABLE for: {', '.join(sorted(available_dates))}"
+        print(msg)
+        if "TELEGRAM_TOKEN" in os.environ:
+            send_telegram(msg)
     else:
-        print("Not available")
+        print("None of the target dates are available.")
